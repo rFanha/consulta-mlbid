@@ -1,0 +1,49 @@
+import express from "express";
+import { chromium } from "playwright";
+
+const app = express();
+
+app.get("/health", (_, res) => res.json({ ok: true }));
+
+app.get("/mlb-item", async (req, res) => {
+  const q = String(req.query.q || "").trim();
+  if (!q) return res.status(400).json({ ok: false, error: "Missing q" });
+
+  const url = `https://www.mercadolivre.com.br/jm/search?as_word=${encodeURIComponent(q)}`;
+
+  let browser;
+  try {
+    browser = await chromium.launch({
+      headless: true,
+      args: ["--no-sandbox", "--disable-dev-shm-usage"]
+    });
+
+    const page = await browser.newPage({
+      userAgent:
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    });
+
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
+
+    // pega o primeiro link que contenha MLB no href
+    await page.waitForSelector('a[href*="MLB"]', { timeout: 15000 });
+
+    const href = await page.$eval('a[href*="MLB"]', (a) => a.href);
+
+    const match = href.match(/MLB-?\d{8,}/i);
+    if (!match) {
+      return res.status(404).json({ ok: false, error: "MLB ID not found", q, url, href });
+    }
+
+    const item_id = match[0].toUpperCase().replace("MLB-", "MLB");
+
+    return res.json({ ok: true, q, url, item_id, href });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e), q, url });
+  } finally {
+    if (browser) await browser.close().catch(() => {});
+  }
+});
+
+const port = process.env.PORT || 3000;
+app.listen(port, () => console.log("Listening on", port));
